@@ -4,8 +4,7 @@ const multer = require('multer');
 const FormData = require('form-data');
 const app = express();
 
-app.use(express.json());
-
+// ---------- CORS GANZ OBEN ----------
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS');
@@ -15,6 +14,9 @@ app.use((req, res, next) => {
   }
   next();
 });
+// -------------------------------------
+
+app.use(express.json());
 
 // GPT-Proxy
 app.post('/gpt', async (req, res) => {
