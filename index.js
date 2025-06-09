@@ -1,21 +1,12 @@
 const express = require('express');
 const fetch = require('node-fetch');
-const multer = require('multer');
+const cors = require('cors');
+const busboy = require('busboy');
 const FormData = require('form-data');
+require('dotenv').config();
+
 const app = express();
-
-// ---------- CORS GANZ OBEN ----------
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
-  next();
-});
-// -------------------------------------
-
+app.use(cors());
 app.use(express.json());
 
 // GPT-Proxy
@@ -24,44 +15,71 @@ app.post('/gpt', async (req, res) => {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
       },
       body: JSON.stringify(req.body)
     });
+
     const data = await response.json();
     res.json(data);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('Fehler im Proxy:', err);
+    res.status(500).send('Fehler im Proxy');
   }
 });
 
-// Whisper-Proxy
-const upload = multer();
-app.post('/v1/audio/transcriptions', upload.single('file'), async (req, res) => {
+// WHISPER-Proxy
+app.post('/whisper', (req, res) => {
   try {
-    const formData = new FormData();
-    formData.append('file', req.file.buffer, {
-      filename: req.file.originalname,
-      contentType: req.file.mimetype
-    });
-    formData.append('model', req.body.model || 'whisper-1');
-    formData.append('language', req.body.language || 'de');
+    const bb = busboy({ headers: req.headers });
+    let fileBuffer = Buffer.alloc(0);
+    let fileType = '';
+    let language = 'de';
 
-    const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-        ...formData.getHeaders()
-      },
-      body: formData
+    bb.on('file', (name, file, info) => {
+      fileType = info.mimeType;
+      file.on('data', (data) => {
+        fileBuffer = Buffer.concat([fileBuffer, data]);
+      });
     });
-    const data = await response.json();
-    res.json(data);
+
+    bb.on('field', (name, val) => {
+      if (name === 'language') language = val;
+    });
+
+    bb.on('finish', async () => {
+      try {
+        const form = new FormData();
+        form.append('file', fileBuffer, {
+          filename: 'audio.webm',
+          contentType: fileType,
+        });
+        form.append('model', 'whisper-1');
+        form.append('language', language);
+
+        const openaiRes = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          },
+          body: form,
+        });
+
+        const data = await openaiRes.json();
+        res.json(data);
+      } catch (error) {
+        console.error('Fehler bei Whisper-Fetch:', error);
+        res.status(500).send('Fehler bei Whisper-Fetch');
+      }
+    });
+
+    req.pipe(bb);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('Fehler im Whisper-Proxy:', err);
+    res.status(500).send('Fehler im Whisper-Proxy');
   }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log('Proxy läuft auf Port', PORT));
+app.listen(PORT, () => console.log(`Proxy läuft auf Port ${PORT}`));
