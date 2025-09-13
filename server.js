@@ -1,30 +1,51 @@
-const express = require('express');
-const fetch = require('node-fetch');
-const cors = require('cors');
-require('dotenv').config();
+// server.js — GPT Proxy (CommonJS, Node >=18)
+
+const express = require("express");
+const cors = require("cors");
 
 const app = express();
-app.use(cors());
-app.use(express.json());
 
-app.post('/gpt', async (req, res) => {
+// Body parser
+app.use(express.json({ limit: "2mb" }));
+
+// CORS (später gern auf deine Domains einschränken)
+app.use(
+  cors({
+    origin: true,
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
+app.options("*", cors());
+
+// Health-Check für Koyeb
+app.get("/health", (_req, res) => res.status(200).send("ok"));
+
+// Chat-Proxy -> OpenAI
+app.post("/gpt", async (req, res) => {
   try {
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
+    const { model = "gpt-4o", messages = [], temperature = 0.3 } = req.body || {};
+
+    // Node 18+ hat global fetch
+    const r = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
       },
-      body: JSON.stringify(req.body)
+      body: JSON.stringify({ model, messages, temperature }),
     });
 
-    const data = await response.json();
+    const data = await r.json();
+    if (!r.ok) {
+      return res.status(r.status).json({ error: data?.error || "Upstream error" });
+    }
     res.json(data);
-  } catch (err) {
-    console.error('Fehler im Proxy:', err);
-    res.status(500).send('Fehler im Proxy');
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
   }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Proxy läuft auf Port ${PORT}`));
+// Start (Koyeb setzt PORT, lokal 3000)
+const port = process.env.PORT || 3000;
+app.listen(port, () => console.log("gpt-proxy listening on", port));
